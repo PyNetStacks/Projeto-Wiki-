@@ -292,7 +292,7 @@ def render_page(body_html, page_title=None, **kwargs):
         BASE_HTML,
         body=body,
         page_title=page_title,
-        site_title="Wiki da Campanha",
+        site_title="Wiki de Ascensão",
     )
 
 
