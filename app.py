@@ -280,7 +280,7 @@ BASE_HTML = """
   {% endwith %}
   {{ body|safe }}
 </div>
-<footer>Feito por: Vinicius Daniel Boni/footer>
+<footer>Feito por: Vinicius Daniel Boni</footer>
 </body>
 </html>
 """
