@@ -280,7 +280,7 @@ BASE_HTML = """
   {% endwith %}
   {{ body|safe }}
 </div>
-<footer>Wiki de Campanha &middot; feita com Flask</footer>
+<footer>Feito por: Vinicius Daniel Boni/footer>
 </body>
 </html>
 """
@@ -298,7 +298,7 @@ def render_page(body_html, page_title=None, **kwargs):
 
 INDEX_BODY = """
 <div class="panel">
-  <h2 style="margin-top:0;">Bem-vindo(a) à Wiki!</h2>
+  <h2 style="margin-top:0;">Bem-vindo(a) à Wiki de Ascensão!</h2>
   <p>Explore os tópicos da campanha abaixo. {% if current_user.is_authenticated and current_user.is_admin %}Você está logado como administrador e pode criar, editar e excluir conteúdo.{% else %}Somente o administrador da campanha pode editar o conteúdo.{% endif %}</p>
 </div>
 
