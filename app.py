@@ -26,12 +26,14 @@ pode navegar e ler.
 
 import os
 import sqlite3
+import uuid
 from datetime import datetime
 
 from flask import (
     Flask, request, redirect, url_for, render_template_string,
-    flash, g, abort
+    flash, g, abort, send_from_directory
 )
+from werkzeug.utils import secure_filename
 from flask_login import (
     LoginManager, UserMixin, login_user, logout_user,
     login_required, current_user
@@ -43,8 +45,33 @@ DATA_DIR = os.environ.get("DATA_DIR", BASE_DIR)
 os.makedirs(DATA_DIR, exist_ok=True)
 DB_PATH = os.path.join(DATA_DIR, "wiki.db")
 
+UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+ALLOWED_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("WIKI_SECRET_KEY", "troque-esta-chave-em-producao-por-favor")
+app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024  # 8 MB max por upload
+
+
+def allowed_image(filename):
+    return (
+        "." in filename
+        and filename.rsplit(".", 1)[1].lower() in ALLOWED_IMAGE_EXTENSIONS
+    )
+
+
+def save_uploaded_image(file_storage):
+    """Salva a imagem enviada e retorna o nome do arquivo salvo, ou None."""
+    if not file_storage or not file_storage.filename:
+        return None
+    if not allowed_image(file_storage.filename):
+        flash("Formato de imagem não suportado. Use PNG, JPG, GIF ou WEBP.", "error")
+        return None
+    ext = secure_filename(file_storage.filename).rsplit(".", 1)[1].lower()
+    new_name = f"{uuid.uuid4().hex}.{ext}"
+    file_storage.save(os.path.join(UPLOAD_DIR, new_name))
+    return new_name
 
 # Em produção (Railway), o SQLite deve ficar em um disco persistente (Volume).
 # Defina a variável de ambiente DATA_DIR apontando para o mount path do Volume
@@ -101,6 +128,7 @@ def init_db():
             topic_id INTEGER NOT NULL,
             title TEXT NOT NULL,
             content TEXT DEFAULT '',
+            image TEXT,
             position INTEGER DEFAULT 0,
             created_at TEXT DEFAULT (datetime('now')),
             updated_at TEXT DEFAULT (datetime('now')),
@@ -108,6 +136,12 @@ def init_db():
         )
     """)
     db.commit()
+
+    # Migração: adiciona a coluna 'image' em bancos já existentes
+    existing_cols = [row[1] for row in db.execute("PRAGMA table_info(subtopics)").fetchall()]
+    if "image" not in existing_cols:
+        db.execute("ALTER TABLE subtopics ADD COLUMN image TEXT")
+        db.commit()
 
     if first_run:
         # cria usuário admin padrão
@@ -363,6 +397,9 @@ SUBTOPIC_BODY = """
 </div>
 <div class="panel">
   <h2 style="margin-top:0;">{{ sub['title'] }}</h2>
+  {% if sub['image'] %}
+    <img src="{{ url_for('uploaded_file', filename=sub['image']) }}" alt="{{ sub['title'] }}" style="max-width:100%; border-radius:8px; border:1px solid var(--border); margin-bottom:16px;">
+  {% endif %}
   <div class="content-body">{{ sub['content'] }}</div>
   <p style="color:var(--muted); font-size:0.85em; margin-top:20px;">Última atualização: {{ sub['updated_at'] }}</p>
   {% if current_user.is_authenticated and current_user.is_admin %}
@@ -394,11 +431,19 @@ FORM_SUBTOPIC_BODY = """
 <div class="breadcrumb"><a href="{{ url_for('index') }}">Início</a> &raquo; <a href="{{ url_for('view_topic', topic_id=topic['id']) }}">{{ topic['title'] }}</a></div>
 <div class="panel">
   <h2 style="margin-top:0;">{{ 'Editar' if sub else 'Novo' }} Subtópico em "{{ topic['title'] }}"</h2>
-  <form method="post">
+  <form method="post" enctype="multipart/form-data">
     <label>Título</label>
     <input type="text" name="title" required value="{{ sub['title'] if sub else '' }}">
     <label>Conteúdo</label>
     <textarea name="content" placeholder="Escreva aqui a história, descrição, regras, etc.">{{ sub['content'] if sub else '' }}</textarea>
+    <label>Imagem (opcional, apenas admin)</label>
+    {% if sub and sub['image'] %}
+      <div style="margin-bottom:10px;">
+        <img src="{{ url_for('uploaded_file', filename=sub['image']) }}" alt="imagem atual" style="max-width:220px; border-radius:8px; border:1px solid var(--border); display:block; margin-bottom:8px;">
+        <label style="font-weight:normal; color:var(--muted);"><input type="checkbox" name="remove_image" value="1" style="width:auto; margin-right:6px;">Remover imagem atual</label>
+      </div>
+    {% endif %}
+    <input type="file" name="image" accept="image/png,image/jpeg,image/gif,image/webp">
     <button class="btn" type="submit">Salvar</button>
     <a class="btn btn-secondary" href="{{ url_for('view_topic', topic_id=topic['id']) }}">Cancelar</a>
   </form>
@@ -613,13 +658,14 @@ def new_subtopic(topic_id):
         if not title:
             flash("O título é obrigatório.", "error")
         else:
+            image_name = save_uploaded_image(request.files.get("image"))
             max_pos = db.execute(
                 "SELECT COALESCE(MAX(position), -1) AS m FROM subtopics WHERE topic_id = ?",
                 (topic_id,),
             ).fetchone()["m"]
             db.execute(
-                "INSERT INTO subtopics (topic_id, title, content, position) VALUES (?, ?, ?, ?)",
-                (topic_id, title, content, max_pos + 1),
+                "INSERT INTO subtopics (topic_id, title, content, image, position) VALUES (?, ?, ?, ?, ?)",
+                (topic_id, title, content, image_name, max_pos + 1),
             )
             db.commit()
             flash("Subtópico criado!", "success")
@@ -644,14 +690,25 @@ def edit_subtopic(topic_id, sub_id):
         if not title:
             flash("O título é obrigatório.", "error")
         else:
+            image_name = sub["image"]
+            new_image = save_uploaded_image(request.files.get("image"))
+            if new_image:
+                image_name = new_image
+            elif request.form.get("remove_image") == "1":
+                image_name = None
             db.execute(
-                "UPDATE subtopics SET title = ?, content = ?, updated_at = ? WHERE id = ?",
-                (title, content, datetime.now().strftime("%Y-%m-%d %H:%M"), sub_id),
+                "UPDATE subtopics SET title = ?, content = ?, image = ?, updated_at = ? WHERE id = ?",
+                (title, content, image_name, datetime.now().strftime("%Y-%m-%d %H:%M"), sub_id),
             )
             db.commit()
             flash("Subtópico atualizado!", "success")
             return redirect(url_for("view_subtopic", topic_id=topic_id, sub_id=sub_id))
     return render_page(FORM_SUBTOPIC_BODY, page_title="Editar subtópico", topic=topic, sub=sub)
+
+
+@app.route("/uploads/<path:filename>")
+def uploaded_file(filename):
+    return send_from_directory(UPLOAD_DIR, filename)
 
 
 @app.route("/topico/<int:topic_id>/subtopico/<int:sub_id>/excluir", methods=["POST"])
