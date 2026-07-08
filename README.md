@@ -1,3 +1,4 @@
+[README.md](https://github.com/user-attachments/files/29808634/README.md)
 # Wiki da Campanha de RPG
 
 Site de wiki em Flask com banco SQLite, feito para hospedar no Railway.
