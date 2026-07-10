@@ -245,6 +245,8 @@ BASE_HTML = """
   header h1 a { color: var(--accent); }
   nav a { margin-left: 16px; color: var(--text); font-size: 0.95em; }
   nav a:first-child { margin-left: 0; }
+  .search-form { display: flex; gap: 6px; align-items: center; }
+  .search-form input[type=text] { margin: 0; width: 220px; }
   .container { max-width: 1000px; margin: 0 auto; padding: 24px; }
   .panel {
     background: var(--panel); border: 1px solid var(--border);
@@ -295,6 +297,10 @@ BASE_HTML = """
 <body>
 <header>
   <h1><a href="{{ url_for('index') }}">📜 {{ site_title }}</a></h1>
+  <form class="search-form" method="get" action="{{ url_for('search') }}">
+    <input type="text" name="q" placeholder="Pesquisar subtópico..." value="{{ request.args.get('q', '') }}" style="margin:0; width:220px;">
+    <button class="btn" type="submit" style="padding:8px 14px;">Buscar</button>
+  </form>
   <nav>
     <a href="{{ url_for('index') }}">Início</a>
     {% if current_user.is_authenticated and current_user.is_admin %}
@@ -360,6 +366,29 @@ INDEX_BODY = """
       </form>
     </div>
     {% endif %}
+  </div>
+{% endfor %}
+"""
+
+SEARCH_BODY = """
+<div class="panel">
+  <h2 style="margin-top:0;">Resultados da pesquisa</h2>
+  {% if query %}
+    <p>{{ results|length }} subtópico(s) encontrado(s) para "<strong>{{ query }}</strong>".</p>
+  {% else %}
+    <p>Digite um termo no campo de busca acima para procurar por subtópicos.</p>
+  {% endif %}
+</div>
+
+{% if query and not results %}
+  <div class="panel">Nenhum subtópico encontrado com esse nome.</div>
+{% endif %}
+
+{% for r in results %}
+  <div class="topic-card">
+    <div class="breadcrumb" style="margin-bottom:6px;"><a href="{{ url_for('view_topic', topic_id=r['topic_id']) }}">{{ r['topic_title'] }}</a></div>
+    <h2 style="font-size:1.2em;"><a href="{{ url_for('view_subtopic', topic_id=r['topic_id'], sub_id=r['id']) }}">{{ r['title'] }}</a></h2>
+    <p class="desc">{{ r['content'][:180] }}{% if r['content']|length > 180 %}...{% endif %}</p>
   </div>
 {% endfor %}
 """
@@ -497,6 +526,26 @@ def index():
         td["subs"] = subs
         topics_full.append(td)
     return render_page(INDEX_BODY, topics=topics_full)
+
+
+@app.route("/pesquisar")
+def search():
+    query = request.args.get("q", "").strip()
+    results = []
+    if query:
+        db = get_db()
+        rows = db.execute(
+            """
+            SELECT s.id, s.title, s.content, s.topic_id, t.title AS topic_title
+            FROM subtopics s
+            JOIN topics t ON t.id = s.topic_id
+            WHERE s.title LIKE ?
+            ORDER BY t.position, t.id, s.position, s.id
+            """,
+            (f"%{query}%",),
+        ).fetchall()
+        results = [dict(r) for r in rows]
+    return render_page(SEARCH_BODY, page_title="Pesquisar", query=query, results=results)
 
 
 @app.route("/topico/<int:topic_id>")
