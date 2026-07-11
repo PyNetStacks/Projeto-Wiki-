@@ -27,6 +27,8 @@ pode navegar e ler.
 import os
 import sqlite3
 import uuid
+import json
+import re as _re
 from datetime import datetime
 
 from flask import (
@@ -135,6 +137,27 @@ def init_db():
             FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE CASCADE
         )
     """)
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS sheet_templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            schema_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS sheets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            template_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            data_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (template_id) REFERENCES sheet_templates(id) ON DELETE CASCADE
+        )
+    """)
     db.commit()
 
     # Migração: adiciona a coluna 'image' em bancos já existentes
@@ -172,6 +195,53 @@ def init_db():
         db.execute(
             "INSERT INTO topics (title, description, position) VALUES (?, ?, ?)",
             ("Regras da Casa", "Regras específicas, homebrew e ajustes da mesa.", 2),
+        )
+
+        # Modelo de ficha de exemplo (baseado na planilha Scion)
+        default_schema = [
+            {"key": "nome", "label": "Nome", "type": "text", "section": "Informações Básicas"},
+            {"key": "jogador", "label": "Jogador", "type": "text", "section": "Informações Básicas"},
+            {"key": "origem", "label": "Origem", "type": "text", "section": "Informações Básicas"},
+            {"key": "ocupacao", "label": "Ocupação", "type": "text", "section": "Informações Básicas"},
+            {"key": "panteao", "label": "Panteão", "type": "text", "section": "Informações Básicas"},
+            {"key": "forca", "label": "Força", "type": "number", "section": "Atributos Físicos"},
+            {"key": "destreza", "label": "Destreza", "type": "number", "section": "Atributos Físicos"},
+            {"key": "vigor", "label": "Vigor", "type": "number", "section": "Atributos Físicos"},
+            {"key": "carisma", "label": "Carisma", "type": "number", "section": "Atributos Sociais"},
+            {"key": "manipulacao", "label": "Manipulação", "type": "number", "section": "Atributos Sociais"},
+            {"key": "aparencia", "label": "Aparência", "type": "number", "section": "Atributos Sociais"},
+            {"key": "percepcao", "label": "Percepção", "type": "number", "section": "Atributos Mentais"},
+            {"key": "inteligencia", "label": "Inteligência", "type": "number", "section": "Atributos Mentais"},
+            {"key": "raciocinio", "label": "Raciocínio", "type": "number", "section": "Atributos Mentais"},
+            {"key": "academicos", "label": "Acadêmicos", "type": "number", "section": "Perícias"},
+            {"key": "atletismo", "label": "Atletismo", "type": "number", "section": "Perícias"},
+            {"key": "combate_corpo_a_corpo", "label": "Combate Corpo a Corpo", "type": "number", "section": "Perícias"},
+            {"key": "cultura", "label": "Cultura", "type": "number", "section": "Perícias"},
+            {"key": "empatia", "label": "Empatia", "type": "number", "section": "Perícias"},
+            {"key": "armas_de_fogo", "label": "Armas de Fogo", "type": "number", "section": "Perícias"},
+            {"key": "integridade", "label": "Integridade", "type": "number", "section": "Perícias"},
+            {"key": "lideranca", "label": "Liderança", "type": "number", "section": "Perícias"},
+            {"key": "medicina", "label": "Medicina", "type": "number", "section": "Perícias"},
+            {"key": "ocultismo", "label": "Ocultismo", "type": "number", "section": "Perícias"},
+            {"key": "persuasao", "label": "Persuasão", "type": "number", "section": "Perícias"},
+            {"key": "pilotagem", "label": "Pilotagem", "type": "number", "section": "Perícias"},
+            {"key": "ciencia", "label": "Ciência", "type": "number", "section": "Perícias"},
+            {"key": "subterfugio", "label": "Subterfúgio", "type": "number", "section": "Perícias"},
+            {"key": "sobrevivencia", "label": "Sobrevivência", "type": "number", "section": "Perícias"},
+            {"key": "tecnologia", "label": "Tecnologia", "type": "number", "section": "Perícias"},
+            {"key": "vida", "label": "Vida (atual/máx)", "type": "text", "section": "Status"},
+            {"key": "empenho", "label": "Empenho (atual/máx)", "type": "text", "section": "Status"},
+            {"key": "eter", "label": "Éter (atual/máx)", "type": "text", "section": "Status"},
+            {"key": "lucidez", "label": "Lucidez (atual/máx)", "type": "text", "section": "Status"},
+            {"key": "armas", "label": "Armas (nome, ataque, tipo, dano)", "type": "textarea", "section": "Equipamento"},
+            {"key": "armadura", "label": "Armadura (tipo, defesa, outros)", "type": "textarea", "section": "Equipamento"},
+            {"key": "habilidades", "label": "Habilidades", "type": "textarea", "section": "Poderes"},
+            {"key": "magias", "label": "Magias (nome, energia, magia, efeito, dano/cura, gasto, detalhes)", "type": "textarea", "section": "Poderes"},
+            {"key": "anotacoes", "label": "Anotações", "type": "textarea", "section": "Outros"},
+        ]
+        db.execute(
+            "INSERT INTO sheet_templates (name, schema_json) VALUES (?, ?)",
+            ("Ficha Scion", json.dumps(default_schema, ensure_ascii=False)),
         )
         db.commit()
     db.close()
@@ -296,19 +366,29 @@ BASE_HTML = """
 </head>
 <body>
 <header>
-  <h1><a href="{{ url_for('index') }}">📜 {{ site_title }}</a></h1>
+  <h1><a href="{{ url_for('home') }}">📜 {{ site_title }}</a></h1>
   <form class="search-form" method="get" action="{{ url_for('search') }}">
     <input type="text" name="q" placeholder="Pesquisar subtópico..." value="{{ request.args.get('q', '') }}" style="margin:0; width:220px;">
     <button class="btn" type="submit" style="padding:8px 14px;">Buscar</button>
   </form>
   <nav>
-    <a href="{{ url_for('index') }}">Início</a>
+    <a href="{{ url_for('home') }}">Início</a>
+    <a href="{{ url_for('wiki_index') }}">Wiki</a>
+    {% if current_user.is_authenticated %}
+      <a href="{{ url_for('my_sheets') }}">Minhas Fichas</a>
+    {% endif %}
     {% if current_user.is_authenticated and current_user.is_admin %}
       <a href="{{ url_for('new_topic') }}">+ Novo Tópico</a>
+      <a href="{{ url_for('admin_templates') }}">Modelos de Ficha</a>
+      <a href="{{ url_for('admin_sheets') }}">Todas as Fichas</a>
+      <a href="{{ url_for('change_password') }}">Trocar senha</a>
+      <a href="{{ url_for('logout') }}">Sair ({{ current_user.username }})</a>
+    {% elif current_user.is_authenticated %}
       <a href="{{ url_for('change_password') }}">Trocar senha</a>
       <a href="{{ url_for('logout') }}">Sair ({{ current_user.username }})</a>
     {% else %}
-      <a href="{{ url_for('login') }}">Login admin</a>
+      <a href="{{ url_for('login') }}">Entrar</a>
+      <a href="{{ url_for('register') }}">Criar conta</a>
     {% endif %}
   </nav>
 </header>
@@ -394,7 +474,7 @@ SEARCH_BODY = """
 """
 
 TOPIC_BODY = """
-<div class="breadcrumb"><a href="{{ url_for('index') }}">Início</a> &raquo; {{ topic['title'] }}</div>
+<div class="breadcrumb"><a href="{{ url_for('wiki_index') }}">Início</a> &raquo; {{ topic['title'] }}</div>
 <div class="panel">
   <h2 style="margin-top:0;">{{ topic['title'] }}</h2>
   {% if topic['description'] %}<p>{{ topic['description'] }}</p>{% endif %}
@@ -420,7 +500,7 @@ TOPIC_BODY = """
 
 SUBTOPIC_BODY = """
 <div class="breadcrumb">
-  <a href="{{ url_for('index') }}">Início</a> &raquo;
+  <a href="{{ url_for('wiki_index') }}">Início</a> &raquo;
   <a href="{{ url_for('view_topic', topic_id=topic['id']) }}">{{ topic['title'] }}</a> &raquo;
   {{ sub['title'] }}
 </div>
@@ -451,13 +531,13 @@ FORM_TOPIC_BODY = """
     <label>Descrição (curta, opcional)</label>
     <textarea name="description" style="min-height:100px;">{{ topic['description'] if topic else '' }}</textarea>
     <button class="btn" type="submit">Salvar</button>
-    <a class="btn btn-secondary" href="{{ url_for('index') }}">Cancelar</a>
+    <a class="btn btn-secondary" href="{{ url_for('wiki_index') }}">Cancelar</a>
   </form>
 </div>
 """
 
 FORM_SUBTOPIC_BODY = """
-<div class="breadcrumb"><a href="{{ url_for('index') }}">Início</a> &raquo; <a href="{{ url_for('view_topic', topic_id=topic['id']) }}">{{ topic['title'] }}</a></div>
+<div class="breadcrumb"><a href="{{ url_for('wiki_index') }}">Início</a> &raquo; <a href="{{ url_for('view_topic', topic_id=topic['id']) }}">{{ topic['title'] }}</a></div>
 <div class="panel">
   <h2 style="margin-top:0;">{{ 'Editar' if sub else 'Novo' }} Subtópico em "{{ topic['title'] }}"</h2>
   <form method="post" enctype="multipart/form-data">
@@ -479,15 +559,228 @@ FORM_SUBTOPIC_BODY = """
 </div>
 """
 
+HOME_BODY = """
+<div class="panel" style="text-align:center;">
+  <h2 style="margin-top:0;">Bem-vindo(a), aventureiro(a)!</h2>
+  <p>O que você deseja fazer?</p>
+</div>
+<div style="display:flex; gap:20px; flex-wrap:wrap; justify-content:center;">
+  <a class="topic-card" href="{{ url_for('wiki_index') }}" style="flex:1; min-width:240px; text-align:center; text-decoration:none;">
+    <h2 style="margin-top:0;">📚 Entrar na Wiki</h2>
+    <p class="desc">Explore o mundo, tópicos e lore da campanha.</p>
+  </a>
+  {% if current_user.is_authenticated %}
+  <a class="topic-card" href="{{ url_for('my_sheets') }}" style="flex:1; min-width:240px; text-align:center; text-decoration:none;">
+    <h2 style="margin-top:0;">📜 Minhas Fichas</h2>
+    <p class="desc">Veja e edite suas fichas de personagem.</p>
+  </a>
+  {% else %}
+  <a class="topic-card" href="{{ url_for('login') }}" style="flex:1; min-width:240px; text-align:center; text-decoration:none;">
+    <h2 style="margin-top:0;">📜 Entrar na Ficha</h2>
+    <p class="desc">Faça login ou crie uma conta para acessar suas fichas de personagem.</p>
+  </a>
+  {% endif %}
+</div>
+"""
+
 LOGIN_BODY = """
 <div class="panel" style="max-width:400px; margin:40px auto;">
-  <h2 style="margin-top:0;">Login do Administrador</h2>
+  <h2 style="margin-top:0;">Login</h2>
   <form method="post">
     <label>Usuário</label>
     <input type="text" name="username" required autofocus>
     <label>Senha</label>
     <input type="password" name="password" required>
     <button class="btn" type="submit">Entrar</button>
+  </form>
+  <p style="margin-top:14px; color:var(--muted);">Não tem conta? <a href="{{ url_for('register') }}">Criar conta</a></p>
+</div>
+"""
+
+REGISTER_BODY = """
+<div class="panel" style="max-width:400px; margin:40px auto;">
+  <h2 style="margin-top:0;">Criar conta</h2>
+  <form method="post">
+    <label>Usuário</label>
+    <input type="text" name="username" required autofocus>
+    <label>Senha</label>
+    <input type="password" name="password" required>
+    <label>Confirmar senha</label>
+    <input type="password" name="confirm_password" required>
+    <button class="btn" type="submit">Criar conta</button>
+  </form>
+  <p style="margin-top:14px; color:var(--muted);">Já tem conta? <a href="{{ url_for('login') }}">Entrar</a></p>
+</div>
+"""
+
+MY_SHEETS_BODY = """
+<div class="panel">
+  <h2 style="margin-top:0;">Minhas Fichas</h2>
+  <div class="actions">
+    <a class="btn" href="{{ url_for('new_sheet') }}">+ Nova ficha</a>
+  </div>
+</div>
+{% if not sheets %}
+  <div class="panel">Você ainda não tem nenhuma ficha.</div>
+{% endif %}
+{% for sh in sheets %}
+  <div class="topic-card">
+    <h2 style="font-size:1.2em;"><a href="{{ url_for('view_sheet', sheet_id=sh['id']) }}">{{ sh['name'] }}</a></h2>
+    <p class="desc">Modelo: {{ sh['template_name'] }} &bull; Atualizado em {{ sh['updated_at'] }}</p>
+    <div class="actions">
+      <a class="btn btn-secondary" href="{{ url_for('view_sheet', sheet_id=sh['id']) }}">Abrir / Editar</a>
+      <form class="inline" method="post" action="{{ url_for('delete_sheet', sheet_id=sh['id']) }}" onsubmit="return confirm('Excluir esta ficha?');">
+        <button class="btn btn-danger" type="submit">Excluir</button>
+      </form>
+    </div>
+  </div>
+{% endfor %}
+"""
+
+NEW_SHEET_BODY = """
+<div class="panel">
+  <h2 style="margin-top:0;">Nova Ficha</h2>
+  {% if not templates %}
+    <p>Nenhum modelo de ficha disponível ainda. Peça para o administrador criar um.</p>
+  {% else %}
+  <form method="post">
+    <label>Nome do personagem</label>
+    <input type="text" name="name" required>
+    <label>Modelo de ficha</label>
+    <select name="template_id" required>
+      {% for t in templates %}
+        <option value="{{ t['id'] }}">{{ t['name'] }}</option>
+      {% endfor %}
+    </select>
+    <button class="btn" type="submit">Criar ficha</button>
+    <a class="btn btn-secondary" href="{{ url_for('my_sheets') }}">Cancelar</a>
+  </form>
+  {% endif %}
+</div>
+"""
+
+SHEET_VIEW_BODY = """
+<div class="panel">
+  <h2 style="margin-top:0;">{{ sheet['name'] }}</h2>
+  <p class="desc">Modelo: {{ template['name'] }} &bull; Dono: {{ owner_username }} &bull; Atualizado em {{ sheet['updated_at'] }}</p>
+  <form method="post">
+    {% for section, fields in sections.items() %}
+      <h3 style="color:var(--accent); border-bottom:1px solid var(--border); padding-bottom:4px; margin-top:24px;">{{ section }}</h3>
+      {% for f in fields %}
+        <label>{{ f['label'] }}</label>
+        {% if f['type'] == 'textarea' %}
+          <textarea name="field_{{ f['key'] }}" style="min-height:120px;">{{ data.get(f['key'], '') }}</textarea>
+        {% elif f['type'] == 'number' %}
+          <input type="number" name="field_{{ f['key'] }}" value="{{ data.get(f['key'], '') }}">
+        {% else %}
+          <input type="text" name="field_{{ f['key'] }}" value="{{ data.get(f['key'], '') }}">
+        {% endif %}
+      {% endfor %}
+    {% endfor %}
+    <div class="actions">
+      <button class="btn" type="submit">Salvar ficha</button>
+      <a class="btn btn-secondary" href="{{ url_for('my_sheets') if not is_admin_view else url_for('admin_sheets') }}">Voltar</a>
+    </div>
+  </form>
+</div>
+"""
+
+ADMIN_SHEETS_BODY = """
+<div class="panel">
+  <h2 style="margin-top:0;">Todas as Fichas (Admin)</h2>
+  <p>Como administrador você pode abrir e editar a ficha de qualquer jogador.</p>
+</div>
+{% if not sheets %}
+  <div class="panel">Nenhuma ficha criada ainda.</div>
+{% endif %}
+{% for sh in sheets %}
+  <div class="topic-card">
+    <h2 style="font-size:1.2em;"><a href="{{ url_for('view_sheet', sheet_id=sh['id']) }}">{{ sh['name'] }}</a></h2>
+    <p class="desc">Jogador: {{ sh['owner_username'] }} &bull; Modelo: {{ sh['template_name'] }} &bull; Atualizado em {{ sh['updated_at'] }}</p>
+    <div class="actions">
+      <a class="btn btn-secondary" href="{{ url_for('view_sheet', sheet_id=sh['id']) }}">Abrir / Editar</a>
+      <form class="inline" method="post" action="{{ url_for('delete_sheet', sheet_id=sh['id']) }}" onsubmit="return confirm('Excluir esta ficha?');">
+        <button class="btn btn-danger" type="submit">Excluir</button>
+      </form>
+    </div>
+  </div>
+{% endfor %}
+"""
+
+ADMIN_TEMPLATES_BODY = """
+<div class="panel">
+  <h2 style="margin-top:0;">Modelos de Ficha (Admin)</h2>
+  <div class="actions">
+    <a class="btn" href="{{ url_for('new_template') }}">+ Novo modelo</a>
+  </div>
+</div>
+{% if not templates %}
+  <div class="panel">Nenhum modelo criado ainda.</div>
+{% endif %}
+{% for t in templates %}
+  <div class="topic-card">
+    <h2 style="font-size:1.2em;">{{ t['name'] }}</h2>
+    <p class="desc">{{ t['field_count'] }} campo(s) &bull; usado em {{ t['sheet_count'] }} ficha(s)</p>
+    <div class="actions">
+      <a class="btn btn-secondary" href="{{ url_for('edit_template', template_id=t['id']) }}">Editar campos</a>
+      <form class="inline" method="post" action="{{ url_for('delete_template', template_id=t['id']) }}" onsubmit="return confirm('Excluir este modelo? Só é possível se não houver fichas usando ele.');">
+        <button class="btn btn-danger" type="submit">Excluir</button>
+      </form>
+    </div>
+  </div>
+{% endfor %}
+"""
+
+EDIT_TEMPLATE_BODY = """
+<div class="panel">
+  <h2 style="margin-top:0;">Editar modelo: {{ template['name'] }}</h2>
+  <p class="desc">Adicione, organize e remova os campos que vão aparecer nas fichas que usam este modelo.</p>
+</div>
+
+<div class="panel">
+  <h3 style="margin-top:0;">Adicionar campo</h3>
+  <form method="post" action="{{ url_for('add_template_field', template_id=template['id']) }}">
+    <label>Seção (agrupamento)</label>
+    <input type="text" name="section" placeholder="Ex: Atributos" required>
+    <label>Rótulo do campo</label>
+    <input type="text" name="label" placeholder="Ex: Força" required>
+    <label>Tipo</label>
+    <select name="type">
+      <option value="text">Texto curto</option>
+      <option value="number">Número</option>
+      <option value="textarea">Texto longo</option>
+    </select>
+    <button class="btn" type="submit">Adicionar campo</button>
+  </form>
+</div>
+
+{% for section, fields in sections.items() %}
+  <div class="panel">
+    <h3 style="margin-top:0; color:var(--accent);">{{ section }}</h3>
+    <ul class="sub-list">
+      {% for f in fields %}
+        <li style="display:flex; justify-content:space-between; align-items:center;">
+          <span>{{ f['label'] }} <span class="badge">{{ f['type'] }}</span></span>
+          <form class="inline" method="post" action="{{ url_for('remove_template_field', template_id=template['id'], field_key=f['key']) }}" onsubmit="return confirm('Remover este campo? Dados já salvos nas fichas para esse campo serão perdidos.');">
+            <button class="btn btn-danger" type="submit" style="padding:2px 10px; font-size:0.8em;">Remover</button>
+          </form>
+        </li>
+      {% endfor %}
+    </ul>
+  </div>
+{% endfor %}
+
+<a class="btn btn-secondary" href="{{ url_for('admin_templates') }}">Voltar aos modelos</a>
+"""
+
+NEW_TEMPLATE_BODY = """
+<div class="panel">
+  <h2 style="margin-top:0;">Novo modelo de ficha</h2>
+  <form method="post">
+    <label>Nome do modelo</label>
+    <input type="text" name="name" placeholder="Ex: Ficha de Vampiro" required>
+    <button class="btn" type="submit">Criar modelo</button>
+    <a class="btn btn-secondary" href="{{ url_for('admin_templates') }}">Cancelar</a>
   </form>
 </div>
 """
@@ -513,7 +806,12 @@ CHANGE_PW_BODY = """
 # ----------------------------------------------------------------------
 
 @app.route("/")
-def index():
+def home():
+    return render_page(HOME_BODY, page_title=None)
+
+
+@app.route("/wiki")
+def wiki_index():
     db = get_db()
     topics = db.execute("SELECT * FROM topics ORDER BY position, id").fetchall()
     topics_full = []
@@ -580,7 +878,7 @@ def view_subtopic(topic_id, sub_id):
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if current_user.is_authenticated:
-        return redirect(url_for("index"))
+        return redirect(url_for("wiki_index"))
     if request.method == "POST":
         db = get_db()
         username = request.form.get("username", "").strip()
@@ -589,9 +887,42 @@ def login():
         if row and check_password_hash(row["password_hash"], password):
             login_user(User(row))
             flash("Login realizado com sucesso!", "success")
-            return redirect(url_for("index"))
+            return redirect(url_for("wiki_index"))
         flash("Usuário ou senha inválidos.", "error")
     return render_page(LOGIN_BODY, page_title="Login")
+
+
+@app.route("/registrar", methods=["GET", "POST"])
+def register():
+    if current_user.is_authenticated:
+        return redirect(url_for("wiki_index"))
+    if request.method == "POST":
+        db = get_db()
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        confirm_password = request.form.get("confirm_password", "")
+        if not username or not password:
+            flash("Usuário e senha são obrigatórios.", "error")
+        elif len(password) < 4:
+            flash("A senha deve ter pelo menos 4 caracteres.", "error")
+        elif password != confirm_password:
+            flash("As senhas não coincidem.", "error")
+        else:
+            existing = db.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
+            if existing:
+                flash("Já existe uma conta com esse nome de usuário.", "error")
+            else:
+                pw_hash = generate_password_hash(password)
+                cur = db.execute(
+                    "INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, 0)",
+                    (username, pw_hash),
+                )
+                db.commit()
+                row = db.execute("SELECT * FROM users WHERE id = ?", (cur.lastrowid,)).fetchone()
+                login_user(User(row))
+                flash("Conta criada com sucesso! Bem-vindo(a).", "success")
+                return redirect(url_for("my_sheets"))
+    return render_page(REGISTER_BODY, page_title="Criar conta")
 
 
 @app.route("/logout")
@@ -599,7 +930,7 @@ def login():
 def logout():
     logout_user()
     flash("Você saiu da conta.", "success")
-    return redirect(url_for("index"))
+    return redirect(url_for("wiki_index"))
 
 
 @app.route("/trocar-senha", methods=["GET", "POST"])
@@ -624,7 +955,7 @@ def change_password():
             )
             db.commit()
             flash("Senha alterada com sucesso!", "success")
-            return redirect(url_for("index"))
+            return redirect(url_for("wiki_index"))
     return render_page(CHANGE_PW_BODY, page_title="Trocar senha")
 
 
@@ -650,7 +981,7 @@ def new_topic():
             )
             db.commit()
             flash("Tópico criado!", "success")
-            return redirect(url_for("index"))
+            return redirect(url_for("wiki_index"))
     return render_page(FORM_TOPIC_BODY, page_title="Novo tópico", topic=None)
 
 
@@ -686,7 +1017,7 @@ def delete_topic(topic_id):
     db.execute("DELETE FROM topics WHERE id = ?", (topic_id,))
     db.commit()
     flash("Tópico excluído.", "success")
-    return redirect(url_for("index"))
+    return redirect(url_for("wiki_index"))
 
 
 # ----------------------------------------------------------------------
@@ -772,6 +1103,255 @@ def delete_subtopic(topic_id, sub_id):
 
 
 # ----------------------------------------------------------------------
+# Fichas de personagem
+# ----------------------------------------------------------------------
+
+def slugify_key(text, existing_keys):
+    base = _re.sub(r"[^a-z0-9]+", "_", text.strip().lower()).strip("_") or "campo"
+    key = base
+    i = 2
+    while key in existing_keys:
+        key = f"{base}_{i}"
+        i += 1
+    return key
+
+
+def group_by_section(schema):
+    sections = {}
+    for f in schema:
+        sections.setdefault(f.get("section") or "Geral", []).append(f)
+    return sections
+
+
+def get_template_or_404(db, template_id):
+    row = db.execute("SELECT * FROM sheet_templates WHERE id = ?", (template_id,)).fetchone()
+    if not row:
+        abort(404)
+    return row
+
+
+def get_sheet_or_404(db, sheet_id):
+    row = db.execute("SELECT * FROM sheets WHERE id = ?", (sheet_id,)).fetchone()
+    if not row:
+        abort(404)
+    return row
+
+
+@app.route("/fichas")
+@login_required
+def my_sheets():
+    db = get_db()
+    rows = db.execute(
+        """
+        SELECT s.*, t.name AS template_name
+        FROM sheets s JOIN sheet_templates t ON t.id = s.template_id
+        WHERE s.user_id = ?
+        ORDER BY s.updated_at DESC
+        """,
+        (current_user.id,),
+    ).fetchall()
+    return render_page(MY_SHEETS_BODY, page_title="Minhas Fichas", sheets=rows)
+
+
+@app.route("/fichas/nova", methods=["GET", "POST"])
+@login_required
+def new_sheet():
+    db = get_db()
+    templates = db.execute("SELECT * FROM sheet_templates ORDER BY name").fetchall()
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        template_id = request.form.get("template_id", "")
+        template = db.execute("SELECT * FROM sheet_templates WHERE id = ?", (template_id,)).fetchone()
+        if not name or not template:
+            flash("Preencha o nome e escolha um modelo válido.", "error")
+        else:
+            db.execute(
+                "INSERT INTO sheets (user_id, template_id, name, data_json) VALUES (?, ?, ?, ?)",
+                (current_user.id, template["id"], name, "{}"),
+            )
+            db.commit()
+            flash("Ficha criada!", "success")
+            return redirect(url_for("my_sheets"))
+    return render_page(NEW_SHEET_BODY, page_title="Nova ficha", templates=templates)
+
+
+@app.route("/fichas/<int:sheet_id>", methods=["GET", "POST"])
+@login_required
+def view_sheet(sheet_id):
+    db = get_db()
+    sheet = get_sheet_or_404(db, sheet_id)
+    if sheet["user_id"] != current_user.id and not current_user.is_admin:
+        abort(403)
+    template = get_template_or_404(db, sheet["template_id"])
+    schema = json.loads(template["schema_json"])
+    if request.method == "POST":
+        data = {}
+        for f in schema:
+            data[f["key"]] = request.form.get(f"field_{f['key']}", "").strip()
+        db.execute(
+            "UPDATE sheets SET data_json = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(data, ensure_ascii=False), datetime.now().strftime("%Y-%m-%d %H:%M"), sheet_id),
+        )
+        db.commit()
+        flash("Ficha salva!", "success")
+        return redirect(url_for("view_sheet", sheet_id=sheet_id))
+    data = json.loads(sheet["data_json"])
+    sections = group_by_section(schema)
+    owner_row = db.execute("SELECT username FROM users WHERE id = ?", (sheet["user_id"],)).fetchone()
+    return render_page(
+        SHEET_VIEW_BODY,
+        page_title=sheet["name"],
+        sheet=sheet,
+        template=template,
+        sections=sections,
+        data=data,
+        owner_username=owner_row["username"] if owner_row else "?",
+        is_admin_view=(sheet["user_id"] != current_user.id),
+    )
+
+
+@app.route("/fichas/<int:sheet_id>/excluir", methods=["POST"])
+@login_required
+def delete_sheet(sheet_id):
+    db = get_db()
+    sheet = get_sheet_or_404(db, sheet_id)
+    if sheet["user_id"] != current_user.id and not current_user.is_admin:
+        abort(403)
+    db.execute("DELETE FROM sheets WHERE id = ?", (sheet_id,))
+    db.commit()
+    flash("Ficha excluída.", "success")
+    return redirect(url_for("admin_sheets") if sheet["user_id"] != current_user.id else url_for("my_sheets"))
+
+
+@app.route("/admin/fichas")
+@login_required
+@admin_required
+def admin_sheets():
+    db = get_db()
+    rows = db.execute(
+        """
+        SELECT s.*, t.name AS template_name, u.username AS owner_username
+        FROM sheets s
+        JOIN sheet_templates t ON t.id = s.template_id
+        JOIN users u ON u.id = s.user_id
+        ORDER BY s.updated_at DESC
+        """
+    ).fetchall()
+    return render_page(ADMIN_SHEETS_BODY, page_title="Todas as Fichas", sheets=rows)
+
+
+@app.route("/admin/modelos")
+@login_required
+@admin_required
+def admin_templates():
+    db = get_db()
+    rows = db.execute("SELECT * FROM sheet_templates ORDER BY name").fetchall()
+    templates = []
+    for t in rows:
+        schema = json.loads(t["schema_json"])
+        sheet_count = db.execute(
+            "SELECT COUNT(*) AS c FROM sheets WHERE template_id = ?", (t["id"],)
+        ).fetchone()["c"]
+        td = dict(t)
+        td["field_count"] = len(schema)
+        td["sheet_count"] = sheet_count
+        templates.append(td)
+    return render_page(ADMIN_TEMPLATES_BODY, page_title="Modelos de Ficha", templates=templates)
+
+
+@app.route("/admin/modelos/novo", methods=["GET", "POST"])
+@login_required
+@admin_required
+def new_template():
+    if request.method == "POST":
+        db = get_db()
+        name = request.form.get("name", "").strip()
+        if not name:
+            flash("O nome do modelo é obrigatório.", "error")
+        else:
+            db.execute(
+                "INSERT INTO sheet_templates (name, schema_json) VALUES (?, ?)",
+                (name, "[]"),
+            )
+            db.commit()
+            flash("Modelo criado! Agora adicione os campos.", "success")
+            return redirect(url_for("admin_templates"))
+    return render_page(NEW_TEMPLATE_BODY, page_title="Novo modelo")
+
+
+@app.route("/admin/modelos/<int:template_id>/editar")
+@login_required
+@admin_required
+def edit_template(template_id):
+    db = get_db()
+    template = get_template_or_404(db, template_id)
+    schema = json.loads(template["schema_json"])
+    sections = group_by_section(schema)
+    return render_page(EDIT_TEMPLATE_BODY, page_title=f"Editar {template['name']}", template=template, sections=sections)
+
+
+@app.route("/admin/modelos/<int:template_id>/campo/novo", methods=["POST"])
+@login_required
+@admin_required
+def add_template_field(template_id):
+    db = get_db()
+    template = get_template_or_404(db, template_id)
+    schema = json.loads(template["schema_json"])
+    section = request.form.get("section", "Geral").strip() or "Geral"
+    label = request.form.get("label", "").strip()
+    field_type = request.form.get("type", "text")
+    if field_type not in ("text", "number", "textarea"):
+        field_type = "text"
+    if not label:
+        flash("O rótulo do campo é obrigatório.", "error")
+    else:
+        existing_keys = {f["key"] for f in schema}
+        key = slugify_key(label, existing_keys)
+        schema.append({"key": key, "label": label, "type": field_type, "section": section})
+        db.execute(
+            "UPDATE sheet_templates SET schema_json = ? WHERE id = ?",
+            (json.dumps(schema, ensure_ascii=False), template_id),
+        )
+        db.commit()
+        flash("Campo adicionado!", "success")
+    return redirect(url_for("edit_template", template_id=template_id))
+
+
+@app.route("/admin/modelos/<int:template_id>/campo/<field_key>/remover", methods=["POST"])
+@login_required
+@admin_required
+def remove_template_field(template_id, field_key):
+    db = get_db()
+    template = get_template_or_404(db, template_id)
+    schema = json.loads(template["schema_json"])
+    schema = [f for f in schema if f["key"] != field_key]
+    db.execute(
+        "UPDATE sheet_templates SET schema_json = ? WHERE id = ?",
+        (json.dumps(schema, ensure_ascii=False), template_id),
+    )
+    db.commit()
+    flash("Campo removido.", "success")
+    return redirect(url_for("edit_template", template_id=template_id))
+
+
+@app.route("/admin/modelos/<int:template_id>/excluir", methods=["POST"])
+@login_required
+@admin_required
+def delete_template(template_id):
+    db = get_db()
+    in_use = db.execute(
+        "SELECT COUNT(*) AS c FROM sheets WHERE template_id = ?", (template_id,)
+    ).fetchone()["c"]
+    if in_use:
+        flash("Não é possível excluir: existem fichas usando este modelo.", "error")
+    else:
+        db.execute("DELETE FROM sheet_templates WHERE id = ?", (template_id,))
+        db.commit()
+        flash("Modelo excluído.", "success")
+    return redirect(url_for("admin_templates"))
+
+
+# ----------------------------------------------------------------------
 # Erros
 # ----------------------------------------------------------------------
 
@@ -782,7 +1362,7 @@ def forbidden(e):
 
 @app.errorhandler(404)
 def not_found(e):
-    return render_page("<div class='panel'><h2>Página não encontrada</h2><p><a href='" + url_for('index') + "'>Voltar ao início</a></p></div>", page_title="Não encontrado"), 404
+    return render_page("<div class='panel'><h2>Página não encontrada</h2><p><a href='" + url_for('wiki_index') + "'>Voltar ao início</a></p></div>", page_title="Não encontrado"), 404
 
 
 # ----------------------------------------------------------------------
